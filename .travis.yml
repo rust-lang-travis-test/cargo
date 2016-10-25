@@ -1,49 +1,147 @@
 language: rust
-rust:
-  - stable
-  - beta
-  - nightly
-sudo: false
-script:
-  - ./configure --prefix=$HOME/cargo-install --disable-cross-tests --disable-optimize
-  - make
-  - make test
-  - make distcheck
-  - make doc
-  - make install
-  - make uninstall
-after_success: |
-  [ $TRAVIS_BRANCH = master ] &&
-  [ $TRAVIS_PULL_REQUEST = false ] &&
-  [ $(uname -s) = Linux ] &&
-  pip install ghp-import --user $USER &&
-  $HOME/.local/bin/ghp-import -n target/doc &&
-  git push -qf https://${TOKEN}@github.com/${TRAVIS_REPO_SLUG}.git gh-pages
-env:
-  global:
-    # apparently we use too much memory and if there's more than one rustc then
-    # when compiling Cargo's unit tests some compilers will be randomly kill
-    # -9'd
-    - CARGOFLAGS=-j1
-    - secure: scGpeetUfba5RWyuS4yt10bPoFAI9wpHEReIFqEx7eH5vr2Anajk6+70jW6GdrWVdUvdINiArlQ3An2DeB9vEUWcBjw8WvuPtOH0tDMoSsuVloPlFD8yn1Ac0Bx9getAO5ofxqtoNg+OV4MDVuGabEesqAOWqURNrBC7XK+ntC8=
+rust: stable
+sudo: required
+dist: trusty
+os: linux
+services:
+  - docker
 
 matrix:
   include:
-    - os: osx
-      rust: stable
+    # stable linux builds, tested
+    - env: TARGET=x86_64-unknown-linux-gnu
+           ALT=i686-unknown-linux-gnu
+           IMAGE=dist
+           MAKE_TARGETS="test distcheck doc install uninstall"
+    - env: TARGET=i686-unknown-linux-gnu
+           IMAGE=dist
+           MAKE_TARGETS=test-unit-i686-unknown-linux-gnu
+           CFG_DISABLE_CROSS_TESTS=1
+
+    # stable osx builds, tested
+    - env: TARGET=x86_64-apple-darwin
+           ALT=i686-apple-darwin
+           MAKE_TARGETS="test distcheck doc install uninstall"
+           MACOSX_DEPLOYMENT_TARGET=10.7
+      os: osx
       before_install:
         - export OPENSSL_INCLUDE_DIR=`brew --prefix openssl`/include
-        - export OPENSSL_LIB_DIR=`brew --prefix openssl`/lib
+        - export OPENSSL_LIB_DIR=`brew --prefix openssl`/include
+    - env: TARGET=i686-apple-darwin
+           MAKE_TARGETS=test
+           MACOSX_DEPLOYMENT_TARGET=10.7
+           CFG_DISABLE_CROSS_TESTS=1
+      os: osx
+      before_install:
+        - export OPENSSL_INCLUDE_DIR=`brew --prefix openssl`/include
+        - export OPENSSL_LIB_DIR=`brew --prefix openssl`/include
 
-branches:
-  only:
-    - master
+    # stable musl target, tested
+    - env: TARGET=x86_64-unknown-linux-musl
+           IMAGE=x86_64-musl
+           CFG_DISABLE_CROSS_TESTS=1
+           MAKE_TARGETS=test-unit-$TARGET
 
-addons:
-  apt:
-    sources:
-      - kalakris-cmake
-    packages:
-      - cmake
-      - g++-multilib
-      - lib32stdc++6
+    # cross compiled targets
+    - env: TARGET=arm-unknown-linux-gnueabi
+           IMAGE=cross
+    - env: TARGET=arm-unknown-linux-gnueabihf
+           IMAGE=cross
+    - env: TARGET=armv7-unknown-linux-gnueabihf
+           IMAGE=cross
+    - env: TARGET=aarch64-unknown-linux-gnu
+           IMAGE=cross
+    - env: TARGET=i686-unknown-freebsd
+           IMAGE=cross
+    - env: TARGET=x86_64-unknown-freebsd
+           IMAGE=cross
+    - env: TARGET=x86_64-unknown-netbsd
+           IMAGE=cross
+    - env: TARGET=mips-unknown-linux-gnu
+           IMAGE=cross
+    - env: TARGET=mipsel-unknown-linux-gnu
+           IMAGE=cross
+    - env: TARGET=mips64-unknown-linux-gnuabi64
+           IMAGE=cross
+      rust: nightly
+    - env: TARGET=mips64el-unknown-linux-gnuabi64
+           IMAGE=cross
+      rust: nightly
+    - env: TARGET=s390x-unknown-linux-gnu
+           IMAGE=cross
+      rust: nightly
+    - env: TARGET=powerpc-unknown-linux-gnu
+           IMAGE=cross
+      rust: beta
+    - env: TARGET=powerpc64-unknown-linux-gnu
+           IMAGE=cross
+      rust: beta
+    - env: TARGET=powerpc64le-unknown-linux-gnu
+           IMAGE=cross
+      rust: beta
+
+    # beta/nightly builds
+    - env: TARGET=x86_64-unknown-linux-gnu
+           ALT=i686-unknown-linux-gnu
+           IMAGE=dist
+           MAKE_TARGETS="test distcheck doc install uninstall"
+           DEPLOY=0
+      rust: beta
+    - env: TARGET=x86_64-unknown-linux-gnu
+           ALT=i686-unknown-linux-gnu
+           IMAGE=dist
+           MAKE_TARGETS="test distcheck doc install uninstall"
+           DEPLOY=0
+      rust: nightly
+
+  exclude:
+    - rust: stable
+
+before_script:
+  - pip install 'travis-cargo<0.2' --user && export PATH=$HOME/.local/bin:$PATH
+  - curl https://static.rust-lang.org/rustup.sh |
+    sh -s -- --add-target=$TARGET --disable-sudo -y --prefix=`rustc --print sysroot`
+  - if [ ! -z "$ALT" ]; then
+      curl https://static.rust-lang.org/rustup.sh |
+      sh -s -- --add-target=$ALT --disable-sudo -y --prefix=`rustc --print sysroot`;
+    fi
+script:
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then
+        SRC=. src/ci/run.sh $TARGET;
+    else
+        src/ci/docker/run.sh $IMAGE $TARGET;
+    fi
+after_success:
+  - travis-cargo --only nightly doc-upload
+
+env:
+  global:
+    - DEPLOY=1
+    - secure: scGpeetUfba5RWyuS4yt10bPoFAI9wpHEReIFqEx7eH5vr2Anajk6+70jW6GdrWVdUvdINiArlQ3An2DeB9vEUWcBjw8WvuPtOH0tDMoSsuVloPlFD8yn1Ac0Bx9getAO5ofxqtoNg+OV4MDVuGabEesqAOWqURNrBC7XK+ntC8=
+
+notifications:
+  email:
+    on_success: never
+
+before_deploy:
+  - mkdir -p deploy/$TRAVIS_COMMIT
+  - cp target/$TARGET/release/dist/cargo-nightly-$TARGET.tar.gz
+    deploy/$TRAVIS_COMMIT
+
+deploy:
+  - provider: s3
+    bucket: rust-lang-cargo-dev
+    skip_cleanup: true
+    local_dir: deploy
+    upload_dir: cargo-master
+    acl: public_read
+    region: us-west-1
+    access_key_id: AKIAIIGBRNRC5GSPEWQQ
+    secret_access_key:
+      secure: tcyhnnlmGaXYgEOhu+cVjBwK0TuGx6bOU+wsnJqX1auNmZnjiouM3xB1EAl+fku4YJdAUR6gX9N4yodAfGxAyNg/eZea4a3JPTWijRVKABhWGsr5gG0cuj1m2cgtWDd0DFFnYrbjkSFNiBv0/8aLSb1AK/XUWbIGijcjIJBkilzuUqnYjkj4cOYz3z0NP6TXuqQa7mGP+CIiZIoXUsR2+rdEmIAHIzBNuRmowBzz7ICvE/T98suECfJj8kBfDjN6FRr1969KUmFqCwqClwT6xzXTgAnqfldAyGgHVcQZvhdUh0QcvtFs7j2HXGSqFWkBIKJSX2Tgnf9847Wsr7P7qsk5w3LeGmschBB+yDuxF2beAvQhgSbRhHNnbRZ6CHh3KwPTMBepfJ30+x22Yr7dvzmmOAPK6Z3Y9F3X3hamxoW+Bmoko/M+lFq3bCqlJ4bDs8f30KHrYsU1SXExgQfmPjVCdwNcafECAc1xc2OF/fTPx6df7MC43+q+puBkx9KLiYkSAmv46y+FdCsV95UVnzFqYTNRJ/yoFgJJUppLjNCZ95s7E5D9WxN194gSwL7Xt0OfycOn2edBgBumjQy2ob9Vu5BpfhqMnhW+SfeekS92DxqCDiiHDXoobs4FiAazEASzcOTxQoLAocymre256nfCDVF26c0KTe5MV5YltO8=
+    on:
+      branch: travis
+      condition: $DEPLOY = 1
+
+cache:
+  cargo: true
