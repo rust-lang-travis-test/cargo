@@ -144,4 +144,6 @@ deploy:
       condition: $DEPLOY = 1
 
 cache:
-  cargo: true
+  directories:
+    - $HOME/.cargo
+    - target/openssl
